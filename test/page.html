@@ -1,0 +1,133 @@
+<!-- test-iframe.html -->
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Test Iframe Parent - Simulating XM Cloud Staging</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      background-color: #f0f0f0;
+    }
+    .controls {
+      background: white;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .controls h2 {
+      margin-top: 0;
+    }
+    button {
+      padding: 10px 20px;
+      margin: 5px;
+      cursor: pointer;
+      background: #007bff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+    iframe {
+      border: 2px solid #007bff;
+      border-radius: 8px;
+      background: white;
+    }
+  </style>
+</head>
+<body>
+  <div class="controls">
+    <h2>🧪 Simulated XM Cloud Parent (Staging Environment)</h2>
+    <p><strong>This page simulates:</strong> https://portal-staging.sitecorecloud.io</p>
+    <p><strong>document.referrer in iframe will be:</strong> <code>file:///...</code> or the current URL</p>
+    
+    <div>
+      <button onclick="sendEnvironment('production')">Send: Production</button>
+      <button onclick="sendEnvironment('staging')">Send: Staging</button>
+      <button onclick="sendEnvironment('development')">Send: Development</button>
+    </div>
+    <p style="font-size: 12px; color: #666; margin-top: 10px;">
+      These buttons send postMessage to the iframe to test Method 2
+    </p>
+  </div>
+
+  <iframe 
+    id="testIframe"
+    src="http://localhost:3000?devmode=true" 
+    width="100%" 
+    height="800px">
+  </iframe>
+
+  <script>
+    // Mock SDK Host - Responds to iframe SDK initialization
+    window.addEventListener('message', function(event) {
+      console.log('Parent received message:', event.data);
+      
+      const iframe = document.getElementById('testIframe');
+      
+      // Respond to SDK initialization handshake
+      if (event.data && event.data.type === 'sdk:init') {
+        console.log('SDK init request received, sending handshake...');
+        iframe.contentWindow.postMessage({
+          type: 'sdk:init:response',
+          success: true
+        }, '*');
+      }
+      
+      // Respond to SDK queries
+      if (event.data && event.data.type === 'sdk:query') {
+        console.log('SDK query received:', event.data.query);
+        
+        const response = {
+          type: 'sdk:query:response',
+          id: event.data.id,
+          success: true,
+          data: {}
+        };
+        
+        // Mock responses for different queries
+        if (event.data.query === 'application.context') {
+          response.data = {
+            name: 'Test App from Mock Parent',
+            id: 'mock-app-id',
+            installationId: 'mock-installation-id',
+            state: 'active',
+            type: 'custom',
+            url: 'http://localhost:3000'
+          };
+        } else if (event.data.query === 'host.user') {
+          response.data = {
+            name: 'Test User',
+            email: 'test@example.com'
+          };
+        } else if (event.data.query === 'host.context') {
+          // Mock host context with environment
+          response.data = {
+            environment: 'staging',  // You can change this to test
+            hostname: 'portal-staging.sitecorecloud.io'
+          };
+        }
+        
+        iframe.contentWindow.postMessage(response, '*');
+      }
+    });
+    
+    // Function to send environment via postMessage
+    function sendEnvironment(env) {
+      const iframe = document.getElementById('testIframe');
+      iframe.contentWindow.postMessage({
+        type: 'environment',
+        value: env
+      }, '*');
+      alert('Sent environment: ' + env + '\nCheck the iframe for updated detection!');
+    }
+    
+    console.log('Mock SDK Host initialized');
+    console.log('This parent will respond to SDK initialization requests');
+  </script>
+</body>
+</html>
