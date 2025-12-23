@@ -44,9 +44,18 @@ function CustomFieldExtension() {
 
     // METHOD 1: URL Query Parameters
     try {
-      const currentUrl = new URL(window.location.href);
-      const urlParams = currentUrl.searchParams;
-      const envParam = urlParams.get("environment") || urlParams.get("env");
+      if (typeof window === 'undefined') {
+        results.push({
+          method: "1. URL Query Parameter",
+          status: "not-available",
+          value: null,
+          details: "Running on server (SSR), window not available",
+          score: 0
+        });
+      } else {
+        const currentUrl = new URL(window.location.href);
+        const urlParams = currentUrl.searchParams;
+        const envParam = urlParams.get("environment") || urlParams.get("env");
       
       if (envParam) {
         results.push({
@@ -56,14 +65,15 @@ function CustomFieldExtension() {
           details: `Found ?environment=${envParam} or ?env=${envParam} in URL`,
           score: 10
         });
-      } else {
-        results.push({
-          method: "1. URL Query Parameter",
-          status: "not-available",
-          value: null,
-          details: "No ?environment or ?env parameter in URL. Add ?environment=production to test.",
-          score: 0
-        });
+        } else {
+          results.push({
+            method: "1. URL Query Parameter",
+            status: "not-available",
+            value: null,
+            details: "No ?environment or ?env parameter in URL. Add ?environment=production to test.",
+            score: 0
+          });
+        }
       }
     } catch (e: any) {
       results.push({
@@ -126,7 +136,15 @@ function CustomFieldExtension() {
 
     // METHOD 4: window.parent.location
     try {
-      if (window.parent && window.parent.location) {
+      if (typeof window === 'undefined') {
+        results.push({
+          method: "4. window.parent.location",
+          status: "not-available",
+          value: null,
+          details: "Running on server (SSR), window not available",
+          score: 0
+        });
+      } else if (window.parent && window.parent.location) {
         const hostname = window.parent.location.hostname;
         let detected = "unknown";
         
@@ -167,7 +185,15 @@ function CustomFieldExtension() {
     }
 
     // METHOD 5: document.referrer
-    if (document.referrer) {
+    if (typeof window === 'undefined' || typeof document === 'undefined') {
+      results.push({
+        method: "5. document.referrer",
+        status: "not-available",
+        value: null,
+        details: "Running on server (SSR), document not available",
+        score: 0
+      });
+    } else if (document.referrer) {
       try {
         const referrerUrl = new URL(document.referrer);
         const hostname = referrerUrl.hostname.toLowerCase();
@@ -209,7 +235,16 @@ function CustomFieldExtension() {
 
     // METHOD 6: window.parent custom properties
     try {
-      const parentWindow = window.parent as any;
+      if (typeof window === 'undefined') {
+        results.push({
+          method: "6. window.parent custom properties",
+          status: "not-available",
+          value: null,
+          details: "Running on server (SSR), window not available",
+          score: 0
+        });
+      } else {
+        const parentWindow = window.parent as any;
       let found = false;
       let envValue = null;
       let source = "";
@@ -230,22 +265,23 @@ function CustomFieldExtension() {
         found = true;
       }
 
-      if (found && envValue) {
-        results.push({
-          method: "6. window.parent custom properties",
-          status: "success",
-          value: String(envValue),
-          details: `Found at: ${source} = "${envValue}"`,
-          score: 5
-        });
-      } else {
-        results.push({
-          method: "6. window.parent custom properties",
-          status: "not-available",
-          value: null,
-          details: "No custom properties found. Checked: __ENV__, environment, config.environment",
-          score: 0
-        });
+        if (found && envValue) {
+          results.push({
+            method: "6. window.parent custom properties",
+            status: "success",
+            value: String(envValue),
+            details: `Found at: ${source} = "${envValue}"`,
+            score: 5
+          });
+        } else {
+          results.push({
+            method: "6. window.parent custom properties",
+            status: "not-available",
+            value: null,
+            details: "No custom properties found. Checked: __ENV__, environment, config.environment",
+            score: 0
+          });
+        }
       }
     } catch (e: any) {
       if (e.name === "SecurityError" || e.message?.includes("cross-origin")) {
@@ -315,7 +351,16 @@ function CustomFieldExtension() {
 
     // METHOD 8: Current window hostname
     try {
-      const hostname = window.location.hostname.toLowerCase();
+      if (typeof window === 'undefined') {
+        results.push({
+          method: "8. Current window hostname",
+          status: "not-available",
+          value: null,
+          details: "Running on server (SSR), window not available",
+          score: 0
+        });
+      } else {
+        const hostname = window.location.hostname.toLowerCase();
       let detected = "unknown";
       
       if (hostname === "localhost" || hostname === "127.0.0.1") {
@@ -328,13 +373,14 @@ function CustomFieldExtension() {
         detected = "production";
       }
       
-      results.push({
-        method: "8. Current window hostname",
-        status: detected !== "unknown" ? "success" : "not-available",
-        value: detected,
-        details: `Current hostname: ${hostname}`,
-        score: 2
-      });
+        results.push({
+          method: "8. Current window hostname",
+          status: detected !== "unknown" ? "success" : "not-available",
+          value: detected,
+          details: `Current hostname: ${hostname}`,
+          score: 2
+        });
+      }
     } catch (e: any) {
       results.push({
         method: "8. Current window hostname",
@@ -807,8 +853,9 @@ function CustomFieldExtension() {
   // Update environment info when appContext, userInfo, hostContext, or postMessageEnv changes
   useEffect(() => {
     // Run detection even in dev mode (without SDK)
-    const shouldRun = appContext || userInfo || hostContext || postMessageEnv || 
-                     (!window.parent || window.parent === window);
+    const isStandalone = typeof window !== 'undefined' && 
+                        (!window.parent || window.parent === window);
+    const shouldRun = appContext || userInfo || hostContext || postMessageEnv || isStandalone;
     
     if (shouldRun) {
       const envInfo = detectEnvironment(appContext, userInfo, hostContext, postMessageEnv);
@@ -993,8 +1040,18 @@ function CustomFieldExtension() {
   };
 
   // Check if we're in development mode (direct access, not in XM Cloud)
-  const isDevelopmentMode = !window.parent || window.parent === window || 
-                           window.location.search.includes('devmode=true');
+  // Only check on client side to avoid SSR issues
+  const [isDevelopmentMode, setIsDevelopmentMode] = useState(false);
+
+  useEffect(() => {
+    // Check development mode only on client side
+    const devMode = typeof window !== 'undefined' && (
+      !window.parent || 
+      window.parent === window || 
+      window.location.search.includes('devmode=true')
+    );
+    setIsDevelopmentMode(devMode);
+  }, []);
 
   return (
     <div>
