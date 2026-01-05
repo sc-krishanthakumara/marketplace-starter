@@ -12,14 +12,19 @@ export interface GraphQLConfig {
 export class ExperienceEdgeService {
   private client: GraphQLClient;
   private siteName: string;
+  private endpoint: string;
+  private apiKey: string;
 
   constructor(config: GraphQLConfig) {
-    this.client = new GraphQLClient(config.endpoint, {
+    this.endpoint = config.endpoint;
+    this.apiKey = config.apiKey;
+    this.siteName = config.siteName;
+    
+    this.client = new GraphQLClient(this.endpoint, {
       headers: {
-        'sc_apikey': config.apiKey,
+        'sc_apikey': this.apiKey,
       },
     });
-    this.siteName = config.siteName;
   }
 
   /**
@@ -144,20 +149,23 @@ export class ExperienceEdgeService {
    * Update the client configuration (e.g., when switching sites or environments)
    */
   updateConfig(config: Partial<GraphQLConfig>): void {
-    if (config.endpoint || config.apiKey) {
-      const headers: Record<string, string> = {};
-      if (config.apiKey) {
-        headers['sc_apikey'] = config.apiKey;
-      }
-      
-      this.client = new GraphQLClient(
-        config.endpoint || this.client.url,
-        { headers }
-      );
+    if (config.endpoint) {
+      this.endpoint = config.endpoint;
     }
-    
+    if (config.apiKey) {
+      this.apiKey = config.apiKey;
+    }
     if (config.siteName) {
       this.siteName = config.siteName;
+    }
+    
+    // Recreate client if endpoint or apiKey changed
+    if (config.endpoint || config.apiKey) {
+      this.client = new GraphQLClient(this.endpoint, {
+        headers: {
+          'sc_apikey': this.apiKey,
+        },
+      });
     }
   }
 }

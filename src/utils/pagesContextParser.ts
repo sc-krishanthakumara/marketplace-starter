@@ -23,7 +23,7 @@ export function extractPageContentFromContext(
   const components = extractComponentsFromLayout(pagesContext);
 
   return {
-    itemId: pageInfo.id,
+    itemId: pageInfo.id || "",
     name: pageInfo.name || "Untitled Page",
     language: pageInfo.language || "en",
     path: pageInfo.path || "/",
