@@ -60,7 +60,8 @@ export class AuthoringGraphQLService {
    */
   async fetchDatasourceByPath(
     datasourcePath: string,
-    language: string = 'en'
+    language: string = 'en',
+    currentPagePath?: string
   ): Promise<DatasourceItem | null> {
     if (!this.client) {
       console.warn('AuthoringGraphQLService not configured');
@@ -68,12 +69,73 @@ export class AuthoringGraphQLService {
     }
 
     // Remove "local:" prefix if present
-    const cleanPath = datasourcePath.replace(/^local:/, '');
+    let cleanPath = datasourcePath.replace(/^local:/, '');
     
     // Construct full Sitecore path
-    const fullPath = cleanPath.startsWith('/sitecore/')
-      ? cleanPath
-      : `/sitecore/content/sync/sync/Home${cleanPath}`;
+    let fullPath: string;
+    
+    if (cleanPath.startsWith('/sitecore/')) {
+      // Already a full path
+      fullPath = cleanPath;
+    } else {
+      // Relative path - need to resolve it
+      // Sitecore datasources are typically stored under /Data/ relative to site root
+      // But Pages context might provide them relative to current page
+      
+      // Normalize the path
+      if (!cleanPath.startsWith('/')) {
+        cleanPath = `/${cleanPath}`;
+      }
+      
+      // Check if path starts with /Data/ - these are typically relative to page context
+      if (cleanPath.startsWith('/Data/')) {
+        // Datasources under /Data/ are stored relative to the page (e.g., /Home/Data/...)
+        // First try: under current page
+        if (currentPagePath) {
+          // Extract the page path without /sitecore/content/sync/sync prefix
+          let pageBase = currentPagePath;
+          if (pageBase.startsWith('/sitecore/content/sync/sync')) {
+            pageBase = pageBase.replace('/sitecore/content/sync/sync', '');
+          }
+          pageBase = pageBase.replace(/\/$/, '');
+          
+          // Construct path: /sitecore/content/sync/sync/[Page]/Data/...
+          fullPath = `/sitecore/content/sync/sync${pageBase}${cleanPath}`;
+        } else {
+          // Fallback: Under Home page
+          fullPath = `/sitecore/content/sync/sync/Home${cleanPath}`;
+        }
+      } else if (currentPagePath) {
+        // Try to resolve relative to current page
+        // Extract the page path without /sitecore/content/sync/sync prefix
+        let pageBase = currentPagePath;
+        if (pageBase.startsWith('/sitecore/content/sync/sync')) {
+          pageBase = pageBase.replace('/sitecore/content/sync/sync', '');
+        }
+        
+        // Remove any trailing slashes
+        pageBase = pageBase.replace(/\/$/, '');
+        
+        // Construct path: current page + datasource path
+        // But avoid double paths (e.g., /Home/Home/Data/...)
+        if (cleanPath.startsWith(pageBase)) {
+          // Path already includes page base, just add sitecore prefix
+          fullPath = `/sitecore/content/sync/sync${cleanPath}`;
+        } else {
+          // Append datasource to page path
+          fullPath = `/sitecore/content/sync/sync${pageBase}${cleanPath}`;
+        }
+      } else {
+        // Fallback: assume relative to Home
+        fullPath = `/sitecore/content/sync/sync/Home${cleanPath}`;
+      }
+    }
+    
+    // Clean up any double slashes or double path segments
+    fullPath = fullPath.replace(/\/+/g, '/');
+    
+    // Fix double "Home" issue: /Home/Home/... -> /Home/...
+    fullPath = fullPath.replace(/\/Home\/Home\//g, '/Home/');
 
     // Use Experience Edge / Preview API schema (simple and well-documented)
     // Also fetch children for components like MultiPromo that may have nested items
@@ -106,14 +168,75 @@ export class AuthoringGraphQLService {
 
     try {
       console.log(`📡 Fetching datasource: ${fullPath} (lang: ${language})`);
+      if (currentPagePath) {
+        console.log(`   Original path: ${datasourcePath}, Current page: ${currentPagePath}`);
+      }
       
-      const data: any = await this.client.request(query, {
-        path: fullPath,
-        language,
-      });
+      let data: any;
+      try {
+        data = await this.client.request(query, {
+          path: fullPath,
+          language,
+        });
+      } catch (queryError: any) {
+        // If query fails, try alternative path resolutions
+        if (cleanPath.startsWith('/Data/')) {
+          // For /Data/ paths, try multiple strategies
+          const alternatives: string[] = [];
+          
+          if (currentPagePath) {
+            let pageBase = currentPagePath.replace('/sitecore/content/sync/sync', '');
+            pageBase = pageBase.replace(/\/$/, '');
+            
+            // Strategy 1: Under Home page (common fallback)
+            if (pageBase !== '/Home') {
+              alternatives.push(`/sitecore/content/sync/sync/Home${cleanPath}`);
+            }
+            
+            // Strategy 2: Directly under site root (less common but possible)
+            alternatives.push(`/sitecore/content/sync/sync${cleanPath}`);
+          } else {
+            // Try site root
+            alternatives.push(`/sitecore/content/sync/sync${cleanPath}`);
+          }
+          
+          // Try each alternative path
+          let found = false;
+          for (const altPath of alternatives) {
+            console.log(`   ⚠️ First path failed, trying alternative: ${altPath}`);
+            try {
+              const altData = await this.client.request(query, {
+                path: altPath,
+                language,
+              });
+              if (altData.item) {
+                data = altData;
+                fullPath = altPath;
+                console.log(`   ✅ Found item at alternative path: ${altPath}`);
+                found = true;
+                break; // Success, exit loop
+              }
+            } catch (altError) {
+              // Continue to next alternative
+              continue;
+            }
+          }
+          
+          // If all alternatives failed, re-throw original error
+          if (!found) {
+            throw queryError;
+          }
+        } else {
+          throw queryError; // Re-throw if not a /Data/ path
+        }
+      }
 
       if (!data.item) {
-        console.warn(`No item found at path: ${fullPath}`);
+        console.warn(`⚠️ No item found at path: ${fullPath}`);
+        console.warn(`   Original datasource path: ${datasourcePath}`);
+        if (currentPagePath) {
+          console.warn(`   Current page path: ${currentPagePath}`);
+        }
         return null;
       }
 
@@ -154,7 +277,8 @@ export class AuthoringGraphQLService {
    */
   async fetchMultipleDatasources(
     datasourcePaths: string[],
-    language: string = 'en'
+    language: string = 'en',
+    currentPagePath?: string
   ): Promise<Map<string, DatasourceItem>> {
     const results = new Map<string, DatasourceItem>();
 
@@ -164,10 +288,13 @@ export class AuthoringGraphQLService {
     }
 
     console.log(`📦 Fetching ${datasourcePaths.length} datasource items...`);
+    if (currentPagePath) {
+      console.log(`📍 Using current page path as base: ${currentPagePath}`);
+    }
 
     // Fetch all datasources in parallel
     const promises = datasourcePaths.map(path =>
-      this.fetchDatasourceByPath(path, language)
+      this.fetchDatasourceByPath(path, language, currentPagePath)
         .then(item => ({ path, item }))
         .catch(err => {
           console.error(`Failed to fetch ${path}:`, err);

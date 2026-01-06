@@ -132,9 +132,12 @@ export async function enrichPageContentWithDatasources(
   }
 
   // Fetch all datasources
+  // Use the page path to resolve relative datasource paths correctly
+  const currentPagePath = pageContent.path || pageContent.itemId;
   const datasourceItems = await graphqlService.fetchMultipleDatasources(
     Array.from(datasourcePaths),
-    pageContent.language
+    pageContent.language,
+    currentPagePath
   );
 
   // Enrich components with datasource fields
