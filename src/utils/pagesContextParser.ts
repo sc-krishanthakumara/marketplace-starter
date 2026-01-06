@@ -211,13 +211,20 @@ function convertDatasourceFieldToComponentField(
       fieldType = 'Image';
     }
     // Link field - extract href and text
-    else if (actualValue.href || actualValue.url) {
+    // Check if it's a link field by structure (has href/url property) OR by field name
+    else if (actualValue.href !== undefined || actualValue.url !== undefined || /^link\d*$/i.test(name)) {
       const parts: string[] = [];
       if (actualValue.text) parts.push(actualValue.text);
       if (actualValue.title) parts.push(`(${actualValue.title})`);
-      const linkUrl = actualValue.href || actualValue.url;
-      if (linkUrl) parts.push(`[${linkUrl}]`);
-      fieldValue = parts.length > 0 ? parts.join(' ') : linkUrl;
+      const linkUrl = actualValue.href || actualValue.url || '';
+      // Only add URL if it's not empty
+      if (linkUrl && linkUrl.trim().length > 0) {
+        parts.push(`[${linkUrl}]`);
+      } else if (parts.length === 0) {
+        // If no text and no URL, skip this field
+        return null;
+      }
+      fieldValue = parts.length > 0 ? parts.join(' ') : (linkUrl || '');
       fieldType = 'Link';
     }
     // Rich text or simple string value

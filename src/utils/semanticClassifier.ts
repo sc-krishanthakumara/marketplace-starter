@@ -28,11 +28,13 @@ const FIELD_PATTERNS: Record<SemanticCategory, RegExp[]> = {
   ],
   Link: [
     /^(link|url|href|cta|action|navigation|anchor)$/i,
+    /^link\d*$/i,  // Match Link1, Link2, etc.
     /link$/i,
     /url$/i,
   ],
   Button: [
     /^(button|cta|action|submit|call.*action)$/i,
+    /^button\d*$/i,  // Match Button1, Button2, etc.
     /button$/i,
     /cta$/i,
   ],
@@ -63,13 +65,17 @@ const CONTENT_PATTERNS: Record<SemanticCategory, RegExp[]> = {
   Link: [
     /^https?:\/\//i,
     /^\/[a-z0-9\-\/]+$/i,
+    /\[https?:\/\/[^\]]+\]/i,  // Match [http://...] or [https://...]
+    /\[[^\]]+\]/i,  // Match any [url] pattern
+  ],
+  Button: [
+    /^(buy|learn more|read more|get started|sign up|subscribe|download|shop now|add to cart|checkout)(\s+\[.*\])?$/i,  // Button text with optional URL
   ],
   Image: [
     /\.(jpg|jpeg|png|gif|svg|webp|bmp)(\?.*)?$/i,
   ],
   Paragraph: [],
   Label: [],
-  Button: [],
   List: [],
   Other: [],
 };
@@ -112,8 +118,16 @@ export function classifyContent(content: string): SemanticCategory | null {
     return null;
   }
 
+  // Check Button patterns first (more specific)
+  for (const pattern of CONTENT_PATTERNS.Button || []) {
+    if (pattern.test(content)) {
+      return 'Button';
+    }
+  }
+
+  // Then check other patterns
   for (const [category, patterns] of Object.entries(CONTENT_PATTERNS)) {
-    if (category === 'Other' || category === 'Paragraph' || category === 'Label') continue;
+    if (category === 'Other' || category === 'Paragraph' || category === 'Label' || category === 'Button') continue;
     
     for (const pattern of patterns) {
       if (pattern.test(content)) {
@@ -193,20 +207,29 @@ export function classifyField(
 
   // Check field name pattern
   const nameCategory = classifyFieldName(fieldName);
+  
+  // Check content patterns
+  const contentCategory = classifyContent(fieldValue);
+  
   if (nameCategory !== 'Other') {
-    // Refine with content analysis
-    const contentCategory = classifyContent(fieldValue);
-    if (contentCategory && contentCategory !== nameCategory) {
-      // Content pattern overrides for RichText detection
-      if (contentCategory === 'RichText') {
-        return 'RichText';
-      }
+    // If field name suggests Link or Button, prioritize that
+    if (nameCategory === 'Link' || nameCategory === 'Button') {
+      return nameCategory;
+    }
+    // Content pattern can override for RichText
+    if (contentCategory === 'RichText') {
+      return 'RichText';
     }
     return nameCategory;
   }
+  
+  // If no field name match, check content patterns
+  // Prioritize Link/Button detection from content
+  if (contentCategory === 'Link' || contentCategory === 'Button') {
+    return contentCategory;
+  }
 
-  // Fall back to content analysis
-  const contentCategory = classifyContent(fieldValue);
+  // Fall back to content analysis (already computed above)
   if (contentCategory) {
     return contentCategory;
   }
