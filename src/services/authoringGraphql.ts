@@ -1,5 +1,5 @@
-// Authoring & Management GraphQL Service
-// Fetches datasource items from Sitecore XM Cloud
+// GraphQL Service for Sitecore XM Cloud
+// Works with both Preview API (Edge Preview) and Authoring API
 
 import { GraphQLClient } from 'graphql-request';
 
@@ -26,14 +26,24 @@ export class AuthoringGraphQLService {
   private client: GraphQLClient | null = null;
   private endpoint: string;
   private apiKey: string;
+  private useProxy: boolean;
 
   constructor(config: AuthoringGraphQLConfig) {
     this.endpoint = config.endpoint;
     this.apiKey = config.apiKey;
     
+    // Check if we're in a browser environment
+    // If so, use the Next.js API proxy to avoid CORS issues
+    this.useProxy = typeof window !== 'undefined';
+    
     if (this.endpoint && this.apiKey) {
-      this.client = new GraphQLClient(this.endpoint, {
-        headers: {
+      // If using proxy, construct full URL using window.location.origin
+      const clientEndpoint = this.useProxy 
+        ? `${window.location.origin}/api/graphql`
+        : this.endpoint;
+      
+      this.client = new GraphQLClient(clientEndpoint, {
+        headers: this.useProxy ? {} : {
           'sc_apikey': this.apiKey,
         },
       });
@@ -58,7 +68,13 @@ export class AuthoringGraphQLService {
 
     // Remove "local:" prefix if present
     const cleanPath = datasourcePath.replace(/^local:/, '');
+    
+    // Construct full Sitecore path
+    const fullPath = cleanPath.startsWith('/sitecore/')
+      ? cleanPath
+      : `/sitecore/content/sync/sync/Home${cleanPath}`;
 
+    // Use Experience Edge / Preview API schema (simple and well-documented)
     const query = `
       query GetDatasourceItem($path: String!, $language: String!) {
         item(path: $path, language: $language) {
@@ -75,28 +91,33 @@ export class AuthoringGraphQLService {
     `;
 
     try {
-      console.log(`📡 Fetching datasource: ${cleanPath}`);
+      console.log(`📡 Fetching datasource: ${fullPath} (lang: ${language})`);
       
       const data: any = await this.client.request(query, {
-        path: cleanPath,
+        path: fullPath,
         language,
       });
 
       if (!data.item) {
-        console.warn(`No item found at path: ${cleanPath}`);
+        console.warn(`No item found at path: ${fullPath}`);
         return null;
       }
 
-      console.log(`✅ Fetched datasource: ${data.item.name}`, data.item);
+      const item = data.item;
+      
+      // Fields are directly on the item (Preview/Edge schema)
+      const fields: DatasourceFieldValue[] = item.fields || [];
+
+      console.log(`✅ Fetched datasource: ${item.name} with ${fields.length} fields`);
 
       return {
-        id: data.item.id,
-        name: data.item.name,
-        path: data.item.path,
-        fields: data.item.fields || [],
+        id: item.id,
+        name: item.name,
+        path: item.path,
+        fields,
       };
     } catch (error) {
-      console.error(`❌ Error fetching datasource ${cleanPath}:`, error);
+      console.error(`❌ Error fetching datasource ${fullPath}:`, error);
       return null;
     }
   }
@@ -179,11 +200,21 @@ export class AuthoringGraphQLService {
 export function createAuthoringGraphQLService(): AuthoringGraphQLService | null {
   const endpoint = process.env.NEXT_PUBLIC_AUTHORING_GRAPHQL_ENDPOINT || '';
   const apiKey = process.env.NEXT_PUBLIC_AUTHORING_API_KEY || '';
+  const bearerToken = process.env.NEXT_PUBLIC_AUTHORING_BEARER_TOKEN || '';
 
-  if (!endpoint || !apiKey) {
-    console.warn('⚠️ Authoring GraphQL not configured. Set NEXT_PUBLIC_AUTHORING_GRAPHQL_ENDPOINT and NEXT_PUBLIC_AUTHORING_API_KEY');
+  if (!endpoint) {
+    console.warn('⚠️ GraphQL endpoint not configured. Set NEXT_PUBLIC_AUTHORING_GRAPHQL_ENDPOINT');
     return null;
   }
 
-  return new AuthoringGraphQLService({ endpoint, apiKey });
+  if (!bearerToken && !apiKey) {
+    console.warn('⚠️ No authentication configured. Set either NEXT_PUBLIC_AUTHORING_BEARER_TOKEN or NEXT_PUBLIC_AUTHORING_API_KEY');
+    return null;
+  }
+
+  // Pass either bearer token or api key (proxy will handle it)
+  return new AuthoringGraphQLService({ 
+    endpoint, 
+    apiKey: bearerToken || apiKey  // Use bearer token if available, otherwise API key
+  });
 }

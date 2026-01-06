@@ -176,6 +176,33 @@ interface SemanticTextItemCardProps {
 
 function SemanticTextItemCard({ item, categoryColor }: SemanticTextItemCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
+  
+  // Parse structured content for Images and Links
+  const parsedContent = useMemo(() => {
+    if (item.category === 'Image') {
+      // Parse: "Alt: xxx | Src: yyy"
+      const altMatch = item.text.match(/Alt: ([^|]+)/);
+      const srcMatch = item.text.match(/Src: (.+)$/);
+      return {
+        type: 'image' as const,
+        alt: altMatch ? altMatch[1].trim() : '',
+        src: srcMatch ? srcMatch[1].trim() : '',
+      };
+    } else if (item.category === 'Link') {
+      // Parse: "text (title) [url]" or "text [url]"
+      const urlMatch = item.text.match(/\[([^\]]+)\]$/);
+      const titleMatch = item.text.match(/\(([^)]+)\)/);
+      const textMatch = item.text.match(/^([^\[(]+)/);
+      return {
+        type: 'link' as const,
+        text: textMatch ? textMatch[1].trim() : '',
+        title: titleMatch ? titleMatch[1].trim() : '',
+        url: urlMatch ? urlMatch[1].trim() : '',
+      };
+    }
+    return { type: 'text' as const, content: item.text };
+  }, [item.text, item.category]);
+  
   const maxPreviewLength = 150;
   const needsTruncation = item.text.length > maxPreviewLength;
 
@@ -187,16 +214,90 @@ function SemanticTextItemCard({ item, categoryColor }: SemanticTextItemCardProps
     <div style={styles.itemCard}>
       <div style={{ ...styles.itemIndicator, backgroundColor: categoryColor }} />
       <div style={styles.itemContent}>
-        <div style={styles.itemText}>{displayText}</div>
-        {needsTruncation && (
-          <button
-            onClick={() => setIsExpanded(!isExpanded)}
-            style={styles.expandTextButton}
-            type="button"
-          >
-            {isExpanded ? 'Show less' : 'Show more'}
-          </button>
+        {/* Rich display for Images */}
+        {parsedContent.type === 'image' && parsedContent.src && (
+          <div style={styles.richImageContent}>
+            <img 
+              src={parsedContent.src} 
+              alt={parsedContent.alt || 'Image'} 
+              style={styles.imageThumbnail}
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = 'none';
+              }}
+            />
+            <div style={styles.imageDetails}>
+              {parsedContent.alt && (
+                <div style={styles.imageField}>
+                  <span style={styles.imageFieldLabel}>Alt Text:</span>
+                  <span style={styles.imageFieldValue}>{parsedContent.alt}</span>
+                </div>
+              )}
+              <div style={styles.imageField}>
+                <span style={styles.imageFieldLabel}>URL:</span>
+                <a 
+                  href={parsedContent.src} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  style={styles.imageUrl}
+                  title="Open image in new tab"
+                >
+                  {parsedContent.src.length > 60 
+                    ? parsedContent.src.substring(0, 60) + '...' 
+                    : parsedContent.src}
+                </a>
+              </div>
+            </div>
+          </div>
         )}
+        
+        {/* Rich display for Links */}
+        {parsedContent.type === 'link' && parsedContent.url && (
+          <div style={styles.richLinkContent}>
+            <div style={styles.linkDetails}>
+              {parsedContent.text && (
+                <div style={styles.linkField}>
+                  <span style={styles.linkFieldLabel}>Text:</span>
+                  <span style={styles.linkFieldValue}>{parsedContent.text}</span>
+                </div>
+              )}
+              {parsedContent.title && (
+                <div style={styles.linkField}>
+                  <span style={styles.linkFieldLabel}>Title:</span>
+                  <span style={styles.linkFieldValue}>{parsedContent.title}</span>
+                </div>
+              )}
+              <div style={styles.linkField}>
+                <span style={styles.linkFieldLabel}>URL:</span>
+                <a 
+                  href={parsedContent.url} 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  style={styles.linkUrl}
+                >
+                  {parsedContent.url}
+                </a>
+              </div>
+            </div>
+          </div>
+        )}
+        
+        {/* Standard text display */}
+        {parsedContent.type === 'text' && (
+          <>
+            <div style={styles.itemText}>{displayText}</div>
+            {needsTruncation && (
+              <button
+                onClick={() => setIsExpanded(!isExpanded)}
+                style={styles.expandTextButton}
+                type="button"
+              >
+                {isExpanded ? 'Show less' : 'Show more'}
+              </button>
+            )}
+          </>
+        )}
+        
+        {/* Metadata */}
         <div style={styles.itemMetadata}>
           <div style={styles.metadataRow}>
             <span style={styles.metadataLabel}>Component:</span>
@@ -397,6 +498,81 @@ const styles: Record<string, React.CSSProperties> = {
   },
   metadataValue: {
     color: '#374151',
+    wordBreak: 'break-all',
+  },
+  // Rich image display styles
+  richImageContent: {
+    display: 'flex',
+    gap: '12px',
+    marginBottom: '12px',
+  },
+  imageThumbnail: {
+    width: '120px',
+    height: '120px',
+    objectFit: 'cover',
+    borderRadius: '6px',
+    border: '1px solid #e5e7eb',
+    flexShrink: 0,
+  },
+  imageDetails: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+  imageField: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+  },
+  imageFieldLabel: {
+    fontSize: '11px',
+    fontWeight: 600,
+    color: '#6b7280',
+    textTransform: 'uppercase',
+  },
+  imageFieldValue: {
+    fontSize: '13px',
+    color: '#374151',
+  },
+  imageUrl: {
+    fontSize: '12px',
+    color: '#3b82f6',
+    textDecoration: 'none',
+    wordBreak: 'break-all',
+  },
+  // Rich link display styles
+  richLinkContent: {
+    marginBottom: '12px',
+  },
+  linkDetails: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    padding: '12px',
+    backgroundColor: '#f9fafb',
+    borderRadius: '6px',
+    border: '1px solid #e5e7eb',
+  },
+  linkField: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+  },
+  linkFieldLabel: {
+    fontSize: '11px',
+    fontWeight: 600,
+    color: '#6b7280',
+    textTransform: 'uppercase',
+  },
+  linkFieldValue: {
+    fontSize: '13px',
+    color: '#374151',
+  },
+  linkUrl: {
+    fontSize: '12px',
+    color: '#3b82f6',
+    textDecoration: 'underline',
     wordBreak: 'break-all',
   },
 };

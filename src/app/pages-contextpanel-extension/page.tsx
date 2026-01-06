@@ -49,6 +49,9 @@ function PagesContextPanel() {
   const [selectedComponentId, setSelectedComponentId] = useState<
     string | undefined
   >();
+  
+  // View mode state
+  const [viewMode, setViewMode] = useState<'semantic' | 'all'>('semantic');
 
   // Initialize contexts
   useEffect(() => {
@@ -195,9 +198,15 @@ function PagesContextPanel() {
     fetchContent();
   }, [pagesContext]);
 
-  // Filter items based on search and category selection
+  // Filter items based on search, category selection, and view mode
   const filteredItems = useMemo(() => {
     let items = semanticItems;
+
+    // In 'all' mode, show everything including non-semantic items
+    // In 'semantic' mode, filter out DataSource pseudo-fields
+    if (viewMode === 'semantic') {
+      items = items.filter(item => item.metadata.fieldName !== 'DataSource');
+    }
 
     // Filter by search query
     if (searchQuery) {
@@ -219,7 +228,7 @@ function PagesContextPanel() {
     }
 
     return items;
-  }, [semanticItems, searchQuery, selectedCategories, selectedComponentId]);
+  }, [semanticItems, searchQuery, selectedCategories, selectedComponentId, viewMode]);
 
   const handleSearch = useCallback((query: string) => {
     setSearchQuery(query);
@@ -302,9 +311,29 @@ function PagesContextPanel() {
         </div>
       </div>
 
-      {/* Search */}
+      {/* Search and View Mode Toggle */}
       <div style={styles.searchContainer}>
         <SearchBox onSearch={handleSearch} />
+        <div style={styles.viewModeToggle}>
+          <button
+            style={{
+              ...styles.viewModeButton,
+              ...(viewMode === 'semantic' ? styles.viewModeButtonActive : {}),
+            }}
+            onClick={() => setViewMode('semantic')}
+          >
+            📊 Semantic View
+          </button>
+          <button
+            style={{
+              ...styles.viewModeButton,
+              ...(viewMode === 'all' ? styles.viewModeButtonActive : {}),
+            }}
+            onClick={() => setViewMode('all')}
+          >
+            📋 All Fields
+          </button>
+        </div>
       </div>
 
       {/* Main content area */}
@@ -564,6 +593,32 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "16px 24px",
     backgroundColor: "#ffffff",
     borderBottom: "1px solid #e5e7eb",
+    display: "flex",
+    gap: "12px",
+    alignItems: "center",
+  },
+  viewModeToggle: {
+    display: "flex",
+    gap: "8px",
+    marginLeft: "auto",
+  },
+  viewModeButton: {
+    padding: "6px 12px",
+    backgroundColor: "#f3f4f6",
+    borderWidth: "1px",
+    borderStyle: "solid",
+    borderColor: "#d1d5db",
+    borderRadius: "6px",
+    fontSize: "12px",
+    fontWeight: 500,
+    color: "#6b7280",
+    cursor: "pointer",
+    transition: "all 0.2s",
+  },
+  viewModeButtonActive: {
+    backgroundColor: "#3b82f6",
+    color: "#ffffff",
+    borderColor: "#3b82f6",
   },
   mainContent: {
     flex: 1,

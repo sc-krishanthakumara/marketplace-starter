@@ -179,6 +179,11 @@ function convertDatasourceFieldToComponentField(
 ): FieldInfo | null {
   const { name, value, jsonValue } = datasourceField;
 
+  // Skip system fields (start with __)
+  if (name.startsWith('__')) {
+    return null;
+  }
+
   // Skip empty fields
   if (!value && !jsonValue) {
     return null;
@@ -187,27 +192,57 @@ function convertDatasourceFieldToComponentField(
   let fieldValue = '';
   let fieldType = 'unknown';
 
+  // Debug: Log the field structure for Image/Link fields
+  if ((name.includes('Image') || name.includes('Link')) && jsonValue) {
+    console.log(`🔍 Field "${name}" structure:`, jsonValue);
+  }
+
   // Handle different field types
-  if (jsonValue) {
-    // Rich text, image, or link field
-    if (jsonValue.value) {
-      fieldValue = jsonValue.value;
-      fieldType = jsonValue.type || 'Rich Text';
-    } else if (jsonValue.src) {
-      fieldValue = jsonValue.src;
+  if (jsonValue && typeof jsonValue === 'object') {
+    // Handle nested value object (common in Sitecore Edge API)
+    const actualValue = jsonValue.value || jsonValue;
+    
+    // Image field - extract src and alt text
+    if (actualValue.src) {
+      const parts: string[] = [];
+      if (actualValue.alt) parts.push(`Alt: ${actualValue.alt}`);
+      if (actualValue.src) parts.push(`Src: ${actualValue.src}`);
+      fieldValue = parts.length > 0 ? parts.join(' | ') : actualValue.src;
       fieldType = 'Image';
-    } else if (jsonValue.href) {
-      fieldValue = jsonValue.href;
+    }
+    // Link field - extract href and text
+    else if (actualValue.href || actualValue.url) {
+      const parts: string[] = [];
+      if (actualValue.text) parts.push(actualValue.text);
+      if (actualValue.title) parts.push(`(${actualValue.title})`);
+      const linkUrl = actualValue.href || actualValue.url;
+      if (linkUrl) parts.push(`[${linkUrl}]`);
+      fieldValue = parts.length > 0 ? parts.join(' ') : linkUrl;
       fieldType = 'Link';
-    } else {
-      fieldValue = JSON.stringify(jsonValue);
+    }
+    // Rich text or simple string value
+    else if (typeof actualValue === 'string') {
+      fieldValue = actualValue;
+      fieldType = jsonValue.type || 'Rich Text';
+    }
+    // Fallback: stringify the object
+    else {
+      console.warn(`⚠️ Unknown field structure for "${name}":`, jsonValue);
+      fieldValue = JSON.stringify(actualValue);
+      fieldType = 'JSON';
     }
   } else if (value) {
-    fieldValue = value;
+    fieldValue = typeof value === 'string' ? value : JSON.stringify(value);
     fieldType = 'Single-Line Text';
   }
 
-  // Skip if still empty
+  // Convert to string if needed
+  if (typeof fieldValue !== 'string') {
+    console.warn(`⚠️ Field "${name}" is not a string:`, typeof fieldValue, fieldValue);
+    fieldValue = String(fieldValue);
+  }
+  
+  // Skip if empty after conversion
   if (!fieldValue || fieldValue.trim().length === 0) {
     return null;
   }
