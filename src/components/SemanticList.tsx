@@ -189,15 +189,46 @@ function SemanticTextItemCard({ item, categoryColor }: SemanticTextItemCardProps
         src: srcMatch ? srcMatch[1].trim() : '',
       };
     } else if (item.category === 'Link') {
-      // Parse: "text (title) [url]" or "text [url]"
+      // Parse: "text (title) [url]" or "text [url]" or just "text"
+      // Handle multiple formats:
+      // 1. "Learn more [http://example.com]"
+      // 2. "Learn more (Title) [http://example.com]"
+      // 3. "Learn more [http://#]" (placeholder URL)
+      // 4. "Learn more" (text only, no URL)
+      
+      // First, try to extract URL (everything in brackets at the end)
       const urlMatch = item.text.match(/\[([^\]]+)\]$/);
+      const url = urlMatch ? urlMatch[1].trim() : '';
+      
+      // Extract title (everything in parentheses)
       const titleMatch = item.text.match(/\(([^)]+)\)/);
-      const textMatch = item.text.match(/^([^\[(]+)/);
+      const title = titleMatch ? titleMatch[1].trim() : '';
+      
+      // Extract text - everything before the first ( or [
+      // Remove URL and title parts to get just the text
+      let text = item.text;
+      if (urlMatch) {
+        text = text.replace(/\[([^\]]+)\]$/, '').trim();
+      }
+      if (titleMatch) {
+        text = text.replace(/\(([^)]+)\)/, '').trim();
+      }
+      
+      // If text is empty after removing URL/title, but we have a URL, the whole thing might be the URL
+      if (!text && url) {
+        text = '';
+      }
+      
+      // If still no text and no URL, use the original text
+      if (!text && !url) {
+        text = item.text.trim();
+      }
+      
       return {
         type: 'link' as const,
-        text: textMatch ? textMatch[1].trim() : '',
-        title: titleMatch ? titleMatch[1].trim() : '',
-        url: urlMatch ? urlMatch[1].trim() : '',
+        text: text,
+        title: title,
+        url: url,
       };
     }
     return { type: 'text' as const, content: item.text };
@@ -251,32 +282,60 @@ function SemanticTextItemCard({ item, categoryColor }: SemanticTextItemCardProps
         )}
         
         {/* Rich display for Links */}
-        {parsedContent.type === 'link' && parsedContent.url && (
+        {parsedContent.type === 'link' && (
           <div style={styles.richLinkContent}>
             <div style={styles.linkDetails}>
-              {parsedContent.text && (
+              {/* ALWAYS show link text if available - this is the most important part */}
+              {parsedContent.text ? (
                 <div style={styles.linkField}>
-                  <span style={styles.linkFieldLabel}>Text:</span>
-                  <span style={styles.linkFieldValue}>{parsedContent.text}</span>
+                  <span style={styles.linkFieldLabel}>Link Text:</span>
+                  <span style={{ ...styles.linkFieldValue, fontWeight: 600, color: '#1e40af', fontSize: '14px' }}>
+                    "{parsedContent.text}"
+                  </span>
+                </div>
+              ) : (
+                <div style={styles.linkField}>
+                  <span style={styles.linkFieldLabel}>Link Text:</span>
+                  <span style={{ ...styles.linkFieldValue, fontStyle: 'italic', color: '#9ca3af' }}>
+                    (no text)
+                  </span>
                 </div>
               )}
+              
               {parsedContent.title && (
                 <div style={styles.linkField}>
                   <span style={styles.linkFieldLabel}>Title:</span>
                   <span style={styles.linkFieldValue}>{parsedContent.title}</span>
                 </div>
               )}
-              <div style={styles.linkField}>
-                <span style={styles.linkFieldLabel}>URL:</span>
-                <a 
-                  href={parsedContent.url} 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  style={styles.linkUrl}
-                >
-                  {parsedContent.url}
-                </a>
-              </div>
+              
+              {/* Show URL - always display it, even if placeholder */}
+              {parsedContent.url ? (
+                <div style={styles.linkField}>
+                  <span style={styles.linkFieldLabel}>URL:</span>
+                  {parsedContent.url !== 'http://#' && parsedContent.url !== '#' ? (
+                    <a 
+                      href={parsedContent.url} 
+                      target="_blank" 
+                      rel="noopener noreferrer"
+                      style={styles.linkUrl}
+                    >
+                      {parsedContent.url}
+                    </a>
+                  ) : (
+                    <span style={{ ...styles.linkFieldValue, fontStyle: 'italic', color: '#9ca3af' }}>
+                      {parsedContent.url} <span style={{ fontSize: '11px' }}>(placeholder)</span>
+                    </span>
+                  )}
+                </div>
+              ) : (
+                <div style={styles.linkField}>
+                  <span style={styles.linkFieldLabel}>URL:</span>
+                  <span style={{ ...styles.linkFieldValue, fontStyle: 'italic', color: '#9ca3af' }}>
+                    (no URL)
+                  </span>
+                </div>
+              )}
             </div>
           </div>
         )}

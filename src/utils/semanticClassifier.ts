@@ -197,8 +197,15 @@ export function classifyField(
     return TEMPLATE_PATTERNS[templateName];
   }
 
-  // Check field type (Sitecore field types)
+  // Check field type (Sitecore field types OR our semantic categories)
   if (fieldType) {
+    // If fieldType is already a semantic category (Link, Image, etc.), use it directly
+    const semanticCategories: SemanticCategory[] = ['Heading', 'Paragraph', 'RichText', 'Label', 'Link', 'Button', 'Image', 'List', 'Other'];
+    if (semanticCategories.includes(fieldType as SemanticCategory)) {
+      return fieldType as SemanticCategory;
+    }
+    
+    // Otherwise, map Sitecore field type to category
     const typeCategory = mapFieldTypeToCategory(fieldType);
     if (typeCategory !== 'Other') {
       return typeCategory;

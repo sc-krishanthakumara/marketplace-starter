@@ -20,6 +20,7 @@ export interface DatasourceItem {
   name: string;
   path: string;
   fields: DatasourceFieldValue[];
+  children?: DatasourceItem[];
 }
 
 export class AuthoringGraphQLService {
@@ -75,6 +76,7 @@ export class AuthoringGraphQLService {
       : `/sitecore/content/sync/sync/Home${cleanPath}`;
 
     // Use Experience Edge / Preview API schema (simple and well-documented)
+    // Also fetch children for components like MultiPromo that may have nested items
     const query = `
       query GetDatasourceItem($path: String!, $language: String!) {
         item(path: $path, language: $language) {
@@ -85,6 +87,18 @@ export class AuthoringGraphQLService {
             name
             value
             jsonValue
+          }
+          children {
+            results {
+              id
+              name
+              path
+              fields {
+                name
+                value
+                jsonValue
+              }
+            }
           }
         }
       }
@@ -107,6 +121,13 @@ export class AuthoringGraphQLService {
       
       // Fields are directly on the item (Preview/Edge schema)
       const fields: DatasourceFieldValue[] = item.fields || [];
+      
+      // Check for child items (e.g., MultiPromo might have nested promo items)
+      const childItems = item.children?.results || [];
+      
+      if (childItems.length > 0) {
+        console.log(`📦 Datasource "${item.name}" has ${childItems.length} child items`);
+      }
 
       console.log(`✅ Fetched datasource: ${item.name} with ${fields.length} fields`);
 
@@ -115,6 +136,12 @@ export class AuthoringGraphQLService {
         name: item.name,
         path: item.path,
         fields,
+        children: childItems.map((child: any) => ({
+          id: child.id,
+          name: child.name,
+          path: child.path,
+          fields: child.fields || [],
+        })),
       };
     } catch (error) {
       console.error(`❌ Error fetching datasource ${fullPath}:`, error);

@@ -145,19 +145,56 @@ export async function enrichPageContentWithDatasources(
       const datasource = datasourceItems.get(enriched.datasourceId);
       
       if (datasource) {
-        console.log(`🔗 Enriching ${enriched.name} with datasource fields`);
+        console.log(`🔗 Enriching ${enriched.name} (${enriched.componentName}) with datasource fields from: ${datasource.path}`);
+        console.log(`   Found ${datasource.fields.length} fields in datasource`);
         
         // Convert datasource fields to component fields
         const datasourceFields = datasource.fields
-          .map(field => convertDatasourceFieldToComponentField(field))
+          .map(field => {
+            const converted = convertDatasourceFieldToComponentField(field);
+            if (converted) {
+              console.log(`   ✅ Field "${field.name}": ${converted.category} - ${converted.value.substring(0, 50)}...`);
+            } else {
+              console.log(`   ⚠️ Field "${field.name}" was filtered out (empty or system field)`);
+            }
+            return converted;
+          })
           .filter((f): f is FieldInfo => f !== null);
 
+        console.log(`   ✅ Added ${datasourceFields.length} fields to component`);
+        
         // Replace the placeholder "DataSource" field with real fields
         enriched.fields = datasourceFields;
+        
+        // If datasource has child items (e.g., MultiPromo with nested promo items),
+        // add them as nested components
+        if (datasource.children && datasource.children.length > 0) {
+          console.log(`📦 Adding ${datasource.children.length} child items from datasource`);
+          
+          const childComponents: ComponentNode[] = datasource.children.map((childItem, idx) => {
+            const childFields = childItem.fields
+              .map(field => convertDatasourceFieldToComponentField(field))
+              .filter((f): f is FieldInfo => f !== null);
+            
+            return {
+              id: `${component.id}-child-${idx}`,
+              name: childItem.name,
+              componentName: childItem.name,
+              type: 'DatasourceChild',
+              datasourceId: childItem.path,
+              fields: childFields,
+              children: [],
+              path: [...component.path, childItem.name],
+            };
+          });
+          
+          // Add child components to existing children
+          enriched.children = [...enriched.children, ...childComponents];
+        }
       }
     }
 
-    // Enrich children
+    // Enrich children recursively
     enriched.children = enriched.children.map(enrichComponent);
 
     return enriched;
@@ -169,6 +206,42 @@ export async function enrichPageContentWithDatasources(
     ...pageContent,
     components: enrichedComponents,
   };
+}
+
+/**
+ * Parse Sitecore link XML format: <Link text="..." url="..." />
+ * Returns object with text and url, or null if not a link XML
+ */
+function parseSitecoreLinkXML(xmlString: string): { text: string; url: string; title?: string } | null {
+  if (!xmlString || typeof xmlString !== 'string') {
+    return null;
+  }
+
+  // Match Sitecore link XML format: <Link text="..." url="..." />
+  const linkMatch = xmlString.match(/<Link\s+([^>]+)\s*\/?>/i);
+  if (!linkMatch) {
+    return null;
+  }
+
+  const attributes = linkMatch[1];
+  
+  // Extract text attribute
+  const textMatch = attributes.match(/text=["']([^"']+)["']/i);
+  const text = textMatch ? textMatch[1] : '';
+  
+  // Extract url attribute
+  const urlMatch = attributes.match(/url=["']([^"']+)["']/i);
+  const url = urlMatch ? urlMatch[1] : '';
+  
+  // Extract title attribute (optional)
+  const titleMatch = attributes.match(/title=["']([^"']+)["']/i);
+  const title = titleMatch ? titleMatch[1] : undefined;
+
+  if (!text && !url) {
+    return null;
+  }
+
+  return { text, url, title };
 }
 
 /**
@@ -192,9 +265,19 @@ function convertDatasourceFieldToComponentField(
   let fieldValue = '';
   let fieldType = 'unknown';
 
-  // Debug: Log the field structure for Image/Link fields
-  if ((name.includes('Image') || name.includes('Link')) && jsonValue) {
-    console.log(`🔍 Field "${name}" structure:`, jsonValue);
+  // Debug: Log the field structure for Image/Link/Description fields
+  if ((name.includes('Image') || name.includes('Link') || name.includes('Description') || name.includes('Desc')) && (jsonValue || value)) {
+    console.log(`🔍 Field "${name}" structure:`, { jsonValue, value, name });
+  }
+
+  // ALWAYS check value string first for Sitecore link XML format (even if jsonValue exists)
+  // This is important because jsonValue might be a parsed object that loses the text
+  let parsedLinkFromValue: { text: string; url: string; title?: string } | null = null;
+  if (value && typeof value === 'string' && value.trim().startsWith('<Link')) {
+    parsedLinkFromValue = parseSitecoreLinkXML(value);
+    if (parsedLinkFromValue) {
+      console.log(`✅ Parsed link XML from value for "${name}":`, parsedLinkFromValue);
+    }
   }
 
   // Handle different field types
@@ -202,30 +285,94 @@ function convertDatasourceFieldToComponentField(
     // Handle nested value object (common in Sitecore Edge API)
     const actualValue = jsonValue.value || jsonValue;
     
-    // Image field - extract src and alt text
-    if (actualValue.src) {
-      const parts: string[] = [];
-      if (actualValue.alt) parts.push(`Alt: ${actualValue.alt}`);
-      if (actualValue.src) parts.push(`Src: ${actualValue.src}`);
-      fieldValue = parts.length > 0 ? parts.join(' | ') : actualValue.src;
-      fieldType = 'Image';
-    }
+    // PRIORITY: Check for Link fields FIRST (before Image) if field name suggests Link
+    // This prevents Link1, Link2 fields from being misclassified as Image
+    const isLinkFieldByName = /^link\d*$/i.test(name) || name.toLowerCase().includes('link');
+    
     // Link field - extract href and text
     // Check if it's a link field by structure (has href/url property) OR by field name
-    else if (actualValue.href !== undefined || actualValue.url !== undefined || /^link\d*$/i.test(name)) {
+    if (isLinkFieldByName || actualValue?.href !== undefined || actualValue?.url !== undefined || parsedLinkFromValue) {
       const parts: string[] = [];
-      if (actualValue.text) parts.push(actualValue.text);
-      if (actualValue.title) parts.push(`(${actualValue.title})`);
-      const linkUrl = actualValue.href || actualValue.url || '';
-      // Only add URL if it's not empty
+      
+      // PRIORITY: Use parsed link from XML value if available (most reliable)
+      // Otherwise, try to extract from jsonValue object
+      let linkText = '';
+      let linkUrl = '';
+      let linkTitle = '';
+      
+      if (parsedLinkFromValue) {
+        // Use parsed XML data (most reliable source for text)
+        linkText = parsedLinkFromValue.text || '';
+        linkUrl = parsedLinkFromValue.url || '';
+        linkTitle = parsedLinkFromValue.title || '';
+        console.log(`📎 Using parsed XML link data for "${name}": text="${linkText}", url="${linkUrl}"`);
+      } else {
+        // Fallback: Extract from jsonValue object
+        linkText = actualValue.text || actualValue.textValue || actualValue.linkText || '';
+        linkUrl = actualValue.href || actualValue.url || actualValue.linkUrl || '';
+        linkTitle = actualValue.title || '';
+      }
+      
+      // Always include text if available
+      if (linkText) {
+        parts.push(linkText);
+      }
+      
+      // Include title if available
+      if (linkTitle) {
+        parts.push(`(${linkTitle})`);
+      }
+      
+      // Include URL even if it's a placeholder (so user knows it exists)
       if (linkUrl && linkUrl.trim().length > 0) {
         parts.push(`[${linkUrl}]`);
-      } else if (parts.length === 0) {
-        // If no text and no URL, skip this field
+      }
+      
+      // Always create a link field if we have either text or URL
+      // This ensures Link1, Link2 fields are always shown, even with placeholder URLs
+      if (linkText || linkUrl) {
+        fieldValue = parts.length > 0 ? parts.join(' ') : (linkText || linkUrl);
+        fieldType = 'Link';
+        console.log(`✅ Classified "${name}" as Link field: text="${linkText}", url="${linkUrl}"`);
+        
+        // Return early to prevent it from being classified as Image
+        const category = classifyField(name, fieldValue, fieldType);
+        return {
+          name,
+          value: fieldValue,
+          type: fieldType,
+          category,
+        };
+      }
+    }
+    
+    // Image field - check multiple possible structures
+    // Structure 1: { src: "...", alt: "..." }
+    // Structure 2: { value: { src: "...", alt: "..." } }
+    // Structure 3: Field name contains "Image" and has src property
+    const imageSrc = actualValue?.src || 
+                     (typeof actualValue === 'object' && actualValue !== null && 'src' in actualValue ? (actualValue as any).src : null);
+    
+    // Only classify as Image if field name suggests Image (not Link)
+    if ((imageSrc || name.toLowerCase().includes('image')) && !isLinkFieldByName && actualValue && typeof actualValue === 'object') {
+      const parts: string[] = [];
+      const alt = actualValue?.alt || actualValue?.altText || '';
+      const src = imageSrc || '';
+      
+      if (alt) parts.push(`Alt: ${alt}`);
+      if (src) parts.push(`Src: ${src}`);
+      
+      // Even if empty, include image field if field name suggests it's an image
+      if (parts.length > 0) {
+        fieldValue = parts.join(' | ');
+      } else if (name.toLowerCase().includes('image')) {
+        // Field name suggests image but no src found - log for debugging
+        console.log(`🔍 Image field "${name}" has no src:`, jsonValue);
+        fieldValue = `[Image field - no src]`;
+      } else {
         return null;
       }
-      fieldValue = parts.length > 0 ? parts.join(' ') : (linkUrl || '');
-      fieldType = 'Link';
+      fieldType = 'Image';
     }
     // Rich text or simple string value
     else if (typeof actualValue === 'string') {
@@ -239,8 +386,30 @@ function convertDatasourceFieldToComponentField(
       fieldType = 'JSON';
     }
   } else if (value) {
-    fieldValue = typeof value === 'string' ? value : JSON.stringify(value);
-    fieldType = 'Single-Line Text';
+    // Check if value is a Sitecore link XML string
+    if (typeof value === 'string' && value.trim().startsWith('<Link')) {
+      const parsedLink = parseSitecoreLinkXML(value);
+      if (parsedLink) {
+        const parts: string[] = [];
+        // Always include text if available
+        if (parsedLink.text) parts.push(parsedLink.text);
+        if (parsedLink.title) parts.push(`(${parsedLink.title})`);
+        // Include URL even if placeholder (so it's visible)
+        if (parsedLink.url && parsedLink.url.trim().length > 0) {
+          parts.push(`[${parsedLink.url}]`);
+        }
+        // Ensure we have something to display
+        fieldValue = parts.length > 0 ? parts.join(' ') : parsedLink.text || parsedLink.url || '';
+        fieldType = 'Link';
+      } else {
+        // Not a valid link XML, treat as regular string
+        fieldValue = value;
+        fieldType = 'Single-Line Text';
+      }
+    } else {
+      fieldValue = typeof value === 'string' ? value : JSON.stringify(value);
+      fieldType = 'Single-Line Text';
+    }
   }
 
   // Convert to string if needed
@@ -249,9 +418,26 @@ function convertDatasourceFieldToComponentField(
     fieldValue = String(fieldValue);
   }
   
-  // Skip if empty after conversion
-  if (!fieldValue || fieldValue.trim().length === 0) {
+  // Skip if empty after conversion, EXCEPT for:
+  // 1. Description fields (should show even if empty)
+  // 2. Image fields (already handled above)
+  // 3. Link fields with text but no URL (still valid)
+  // 4. Fields that are explicitly set but empty (to show structure)
+  const isDescriptionField = /description|desc|text|content|body/i.test(name);
+  const isEmpty = !fieldValue || fieldValue.trim().length === 0;
+  
+  if (isEmpty && !isDescriptionField && fieldType !== 'Image' && fieldType !== 'Link') {
     return null;
+  }
+  
+  // For empty description fields, show placeholder
+  if (isEmpty && isDescriptionField) {
+    fieldValue = '[Empty]';
+  }
+  
+  // For link fields, ensure we show the text even if URL is placeholder
+  if (fieldType === 'Link' && isEmpty) {
+    return null; // Only skip if completely empty
   }
 
   // Classify the field
